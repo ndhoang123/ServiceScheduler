@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using ServiceScheduler.Api.Data;
@@ -14,7 +15,8 @@ public class AppointmentsController : ControllerBase
 
     public AppointmentsController(ISchedulingService scheduling) => _scheduling = scheduling;
 
-    [HttpPost]
+    [Authorize]
+    [HttpPost("Book")]
     public async Task<IActionResult> Book([FromBody] BookAppointmentRequest request)
     {
         var (success, error, appointment) = await _scheduling.BookAppointmentAsync(request);
@@ -34,6 +36,7 @@ public class AppointmentsController : ControllerBase
         return appointment is null ? NotFound() : Ok(appointment);
     }
 
+    [Authorize]
     [HttpPost("{id:int}/cancel")]
     public async Task<IActionResult> Cancel(int id, [FromBody] CancelAppointmentRequest request)
     {

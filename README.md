@@ -45,6 +45,35 @@ Three xUnit tests exercise the core engine directly against an isolated InMemory
 
 All requests below use `http://localhost:5265`.
 
+### 0. Get a JWT token
+
+All `/api/appointments` endpoints require a Bearer token. Use the dev token endpoint to generate one:
+
+```json
+POST /api/auth/token
+{
+  "username": "test-user"
+}
+```
+
+Response:
+```json
+{
+  "token": "eyJhbGci..."
+}
+```
+
+**In Swagger UI:** click the **Authorize 🔒** button at the top, paste the token value (without any prefix), then click **Authorize**.
+
+**In curl / HTTP clients:** add the header:
+```
+Authorization: Bearer <token>
+```
+
+> The token is valid for 60 minutes. Re-call this endpoint if it expires.
+
+---
+
 ### 1. Seed sample data
 ```
 POST /api/seed
@@ -107,6 +136,7 @@ ServiceScheduler/
 ├── ServiceScheduler.Api/
 │   ├── Controllers/
 │   │   ├── AppointmentsController.cs   — booking, retrieval, cancellation
+│   │   ├── AuthController.cs           — dev token generation (POST /api/auth/token)
 │   │   └── SeedController.cs           — dev-only data seeding
 │   ├── Data/
 │   │   └── SchedulerDbContext.cs       — EF Core context + index configuration
