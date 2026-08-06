@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json.Serialization;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using ServiceScheduler.Api.Data;
@@ -8,7 +9,8 @@ using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .AddJsonOptions(o => o.JsonSerializerOptions.ReferenceHandler = ReferenceHandler.IgnoreCycles);
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
@@ -57,9 +59,13 @@ builder.Services.AddHealthChecks();
 
 var app = builder.Build();
 
-// Auto-create SQLite schema on first run (no migrations needed for dev)
+// Ensure DbFile/ directory and SQLite schema exist on first run
 using (var scope = app.Services.CreateScope())
-    scope.ServiceProvider.GetRequiredService<SchedulerDbContext>().Database.EnsureCreated();
+{
+    var db = scope.ServiceProvider.GetRequiredService<SchedulerDbContext>();
+    Directory.CreateDirectory(Path.GetDirectoryName(db.Database.GetDbConnection().DataSource)!);
+    db.Database.EnsureCreated();
+}
 
 if (app.Environment.IsDevelopment())
 {
