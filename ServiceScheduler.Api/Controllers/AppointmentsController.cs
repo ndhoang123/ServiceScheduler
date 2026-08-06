@@ -30,7 +30,7 @@ public class AppointmentsController : ControllerBase
             _logger.LogWarning("Book conflict: {Error}", error);
             return Conflict(new { error });
         }
-        return CreatedAtAction(nameof(GetById), new { id = appointment!.Id }, appointment);
+        return CreatedAtAction(nameof(GetById), new { id = appointment!.Id }, AppointmentResponse.From(appointment));
     }
 
     [HttpGet("{id:int}")]
@@ -45,7 +45,7 @@ public class AppointmentsController : ControllerBase
             .Include(a => a.AuditLogs)
             .FirstOrDefaultAsync(a => a.Id == id, ct);
 
-        return appointment is null ? NotFound() : Ok(appointment);
+        return appointment is null ? NotFound() : Ok(AppointmentResponse.From(appointment));
     }
 
     [Authorize]
