@@ -108,7 +108,17 @@ public class SchedulingService : ISchedulingService
                 "Appointment confirmed: id={AppointmentId} bay={BayId} technician={TechnicianId}",
                 appointment.Id, bay.Id, technician.Id);
 
-            return (true, string.Empty, appointment);
+            // reload so all navigation properties are populated for the caller
+            var full = await _db.Appointments
+                .Include(a => a.Customer)
+                .Include(a => a.Vehicle)
+                .Include(a => a.ServiceBay)
+                .Include(a => a.Technician)
+                .Include(a => a.ServiceLines).ThenInclude(sl => sl.ServiceType)
+                .Include(a => a.AuditLogs)
+                .FirstAsync(a => a.Id == appointment.Id, ct);
+
+            return (true, string.Empty, full);
         }
         catch (Exception ex)
         {

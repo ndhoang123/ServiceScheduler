@@ -37,7 +37,11 @@ public class AppointmentsController : ControllerBase
     public async Task<IActionResult> GetById([FromServices] SchedulerDbContext db, int id, CancellationToken ct)
     {
         var appointment = await db.Appointments
-            .Include(a => a.ServiceLines)
+            .Include(a => a.Customer)
+            .Include(a => a.Vehicle)
+            .Include(a => a.ServiceBay)
+            .Include(a => a.Technician)
+            .Include(a => a.ServiceLines).ThenInclude(sl => sl.ServiceType)
             .Include(a => a.AuditLogs)
             .FirstOrDefaultAsync(a => a.Id == id, ct);
 

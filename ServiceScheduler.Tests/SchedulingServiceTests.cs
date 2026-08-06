@@ -42,7 +42,9 @@ public class SchedulingServiceTests
             Name = "John Smith",
             DealershipLocation = "Main",
             Skill = TechnicianSkill.General,
-            IsActive = true
+            IsActive = true,
+            ShiftStart = new TimeOnly(8, 0),
+            ShiftEnd = new TimeOnly(17, 0)
         });
         db.Customers.Add(new Customer { Id = 1, Name = "Alice", Email = "alice@test.com", Phone = "555-0001" });
         db.Vehicles.Add(new Vehicle
@@ -79,6 +81,12 @@ public class SchedulingServiceTests
         Assert.True(success);
         Assert.NotNull(appointment);
         Assert.Equal(AppointmentStatus.Confirmed, appointment.Status);
+        Assert.NotNull(appointment.Customer);
+        Assert.NotNull(appointment.Vehicle);
+        Assert.NotNull(appointment.ServiceBay);
+        Assert.NotNull(appointment.Technician);
+        Assert.NotEmpty(appointment.ServiceLines);
+        Assert.All(appointment.ServiceLines, sl => Assert.NotNull(sl.ServiceType));
     }
 
     [Fact]
