@@ -1,6 +1,67 @@
-@ServiceScheduler.Api_HostAddress = http://localhost:5265
+@host = http://localhost:5265
 
-GET {{ServiceScheduler.Api_HostAddress}}/weatherforecast/
-Accept: application/json
+# ─── 1. Health check ─────────────────────────────────────────────────────────
+GET {{host}}/health
+
+###
+
+# ─── 2. Get a JWT (dev-only endpoint) ────────────────────────────────────────
+# @name login
+POST {{host}}/api/auth/token
+Content-Type: application/json
+
+{
+  "username": "advisor1"
+}
+
+###
+
+@token = {{login.response.body.token}}
+
+# ─── 3. Seed reference data (bays, techs, customers, vehicles) ───────────────
+POST {{host}}/api/seed
+Authorization: Bearer {{token}}
+
+###
+
+# ─── 4. Book an Oil Change appointment ───────────────────────────────────────
+# @name book
+POST {{host}}/api/appointments
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "customerId": 1,
+  "vehicleId": 1,
+  "dealershipLocation": "Main",
+  "requestedStart": "2026-08-10T09:00:00Z",
+  "serviceLines": [
+    { "serviceTypeId": 1 }
+  ]
+}
+
+###
+
+@appointmentId = {{book.response.body.id}}
+
+# ─── 5. Retrieve the booked appointment ──────────────────────────────────────
+GET {{host}}/api/appointments/{{appointmentId}}
+
+###
+
+# ─── 6. Cancel the appointment ───────────────────────────────────────────────
+POST {{host}}/api/appointments/{{appointmentId}}/cancel
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "cancelledBy": "advisor1",
+  "reason": "Customer requested rescheduling"
+}
+
+###
+
+# ─── 7. Confirm cancelled (should return 409 if re-cancelled, or 404) ────────
+GET {{host}}/api/appointments/{{appointmentId}}
 
 ###
