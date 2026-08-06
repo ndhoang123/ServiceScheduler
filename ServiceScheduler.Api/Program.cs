@@ -1,6 +1,5 @@
 ﻿using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using ServiceScheduler.Api.Data;
@@ -52,12 +51,15 @@ builder.Services
     });
 builder.Services.AddAuthorization();
 builder.Services.AddDbContext<SchedulerDbContext>(opt =>
-    opt.UseInMemoryDatabase("ServiceSchedulerDb")
-       .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning)));
+    opt.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection")));
 builder.Services.AddScoped<ISchedulingService, SchedulingService>();
 builder.Services.AddHealthChecks();
 
 var app = builder.Build();
+
+// Auto-create SQLite schema on first run (no migrations needed for dev)
+using (var scope = app.Services.CreateScope())
+    scope.ServiceProvider.GetRequiredService<SchedulerDbContext>().Database.EnsureCreated();
 
 if (app.Environment.IsDevelopment())
 {
