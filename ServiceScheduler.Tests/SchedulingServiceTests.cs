@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.Logging.Abstractions;
 using ServiceScheduler.Api.Data;
 using ServiceScheduler.Api.Models;
 using ServiceScheduler.Api.Services;
@@ -71,7 +72,7 @@ public class SchedulingServiceTests
     {
         var db = CreateDb();
         await SeedAsync(db);
-        var service = new SchedulingService(db);
+        var service = new SchedulingService(db, NullLogger<SchedulingService>.Instance);
 
         var (success, _, appointment) = await service.BookAppointmentAsync(MakeRequest(DateTime.UtcNow.AddDays(1)));
 
@@ -85,7 +86,7 @@ public class SchedulingServiceTests
     {
         var db = CreateDb();
         await SeedAsync(db);
-        var service = new SchedulingService(db);
+        var service = new SchedulingService(db, NullLogger<SchedulingService>.Instance);
         var start = DateTime.UtcNow.AddDays(1);
 
         await service.BookAppointmentAsync(MakeRequest(start)); // occupies the only bay and tech
@@ -101,7 +102,7 @@ public class SchedulingServiceTests
     {
         var db = CreateDb();
         await SeedAsync(db);
-        var service = new SchedulingService(db);
+        var service = new SchedulingService(db, NullLogger<SchedulingService>.Instance);
         var start = DateTime.UtcNow.AddDays(1);
 
         var (_, _, first) = await service.BookAppointmentAsync(MakeRequest(start));

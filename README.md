@@ -47,7 +47,7 @@ All requests below use `http://localhost:5265`.
 
 ### 0. Get a JWT token
 
-All `/api/appointments` endpoints require a Bearer token. Use the dev token endpoint to generate one:
+All appointment mutation endpoints (booking/cancellation) require a Bearer token. Use the dev token endpoint to generate one:
 
 ```json
 POST /api/auth/token

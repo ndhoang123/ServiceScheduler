@@ -12,37 +12,48 @@ namespace ServiceScheduler.Api.Controllers;
 public class AppointmentsController : ControllerBase
 {
     private readonly ISchedulingService _scheduling;
+    private readonly ILogger<AppointmentsController> _logger;
 
-    public AppointmentsController(ISchedulingService scheduling) => _scheduling = scheduling;
+    public AppointmentsController(ISchedulingService scheduling, ILogger<AppointmentsController> logger)
+    {
+        _scheduling = scheduling;
+        _logger = logger;
+    }
 
     [Authorize]
-    [HttpPost("Book")]
-    public async Task<IActionResult> Book([FromBody] BookAppointmentRequest request)
+    [HttpPost()]
+    public async Task<IActionResult> Book([FromBody] BookAppointmentRequest request, CancellationToken ct)
     {
-        var (success, error, appointment) = await _scheduling.BookAppointmentAsync(request);
+        var (success, error, appointment) = await _scheduling.BookAppointmentAsync(request, ct);
         if (!success)
+        {
+            _logger.LogWarning("Book conflict: {Error}", error);
             return Conflict(new { error });
+        }
         return CreatedAtAction(nameof(GetById), new { id = appointment!.Id }, appointment);
     }
 
     [HttpGet("{id:int}")]
-    public async Task<IActionResult> GetById([FromServices] SchedulerDbContext db, int id)
+    public async Task<IActionResult> GetById([FromServices] SchedulerDbContext db, int id, CancellationToken ct)
     {
         var appointment = await db.Appointments
             .Include(a => a.ServiceLines)
             .Include(a => a.AuditLogs)
-            .FirstOrDefaultAsync(a => a.Id == id);
+            .FirstOrDefaultAsync(a => a.Id == id, ct);
 
         return appointment is null ? NotFound() : Ok(appointment);
     }
 
     [Authorize]
     [HttpPost("{id:int}/cancel")]
-    public async Task<IActionResult> Cancel(int id, [FromBody] CancelAppointmentRequest request)
+    public async Task<IActionResult> Cancel(int id, [FromBody] CancelAppointmentRequest request, CancellationToken ct)
     {
-        var (success, error) = await _scheduling.CancelAppointmentAsync(id, request.CancelledBy, request.Reason);
+        var (success, error) = await _scheduling.CancelAppointmentAsync(id, request.CancelledBy, request.Reason, ct);
         if (!success)
+        {
+            _logger.LogWarning("Cancel conflict: id={AppointmentId} reason={Error}", id, error);
             return Conflict(new { error });
+        }
         return NoContent();
     }
 }

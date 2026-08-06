@@ -11,8 +11,13 @@ namespace ServiceScheduler.Api.Controllers;
 public class AuthController : ControllerBase
 {
     private readonly IConfiguration _config;
+    private readonly IWebHostEnvironment _env;
 
-    public AuthController(IConfiguration config) => _config = config;
+    public AuthController(IConfiguration config, IWebHostEnvironment env)
+    {
+        _config = config;
+        _env = env;
+    }
 
     /// <summary>Dev-only endpoint — issues a JWT for local testing.</summary>
     [HttpPost("token")]
@@ -21,8 +26,11 @@ public class AuthController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.Username))
             return BadRequest(new { error = "Username is required." });
 
-        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_config["Jwt:Key"]!));
-        var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+        var jwtKey = _config["Jwt:Key"];
+        
+        if (string.IsNullOrWhiteSpace(jwtKey))
+            return StatusCode(500, new { error = "JWT signing key is not configured (Jwt:Key)." });
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey));var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
         var claims = new[]
         {
