@@ -34,10 +34,9 @@ Content-Type: application/json
   "customerId": 1,
   "vehicleId": 1,
   "dealershipLocation": "Main",
-  "requestedStart": "2026-08-10T09:00:00Z",
-  "serviceLines": [
-    { "serviceTypeId": 1 }
-  ]
+  "serviceTypeIds": [1],
+  "startTime": "2026-08-10T09:00:00Z",
+  "advisorId": "advisor1"
 }
 
 ###
