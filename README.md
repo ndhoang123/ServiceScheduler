@@ -47,19 +47,29 @@ All requests below use `http://localhost:5265`.
 
 ### 0. Get a JWT token
 
-All appointment mutation endpoints (booking/cancellation) require a Bearer token. Use the dev token endpoint to generate one:
+All appointment endpoints require a Bearer token. Use the dev token endpoint to generate one:
 
 ```json
 POST /api/auth/token
 {
-  "username": "test-user"
+  "username": "advisor",
+  "password": "Advisor123!"
 }
 ```
+
+Built-in demo accounts:
+
+| Username | Password | Role |
+|---|---|---|
+| `advisor` | `Advisor123!` | `ServiceAdvisor` |
+| `admin` | `Admin123!` | `Admin` |
+| `customer` | `Customer123!` | `Customer` |
 
 Response:
 ```json
 {
-  "token": "eyJhbGci..."
+  "token": "eyJhbGci...",
+  "role": "ServiceAdvisor"
 }
 ```
 
@@ -136,13 +146,21 @@ ServiceScheduler/
 ├── ServiceScheduler.Api/
 │   ├── Controllers/
 │   │   ├── AppointmentsController.cs   — booking, retrieval, cancellation
-│   │   ├── AuthController.cs           — dev token generation (POST /api/auth/token)
+│   │   ├── AuthController.cs           — JWT token issuance (POST /api/auth/token)
 │   │   └── SeedController.cs           — dev-only data seeding
 │   ├── Data/
 │   │   └── SchedulerDbContext.cs       — EF Core context + index configuration
-│   ├── Models/                         — domain entities and request DTOs
+│   ├── Infrastructure/
+│   │   └── ServiceCollectionExtensions.cs  — grouped DI registration extension methods
+│   ├── Models/                         — domain entities, request/response DTOs
+│   │   └── AppointmentStateMachine.cs  — state transition table (OCP)
+│   ├── Options/
+│   │   └── SchedulingOptions.cs        — configurable scheduling settings (e.g. BufferMinutes)
 │   ├── Services/
-│   │   ├── ISchedulingService.cs
+│   │   ├── Interface/
+│   │   │   ├── ISchedulingService.cs
+│   │   │   └── IUserCredentialStore.cs
+│   │   ├── DemoUserStore.cs            — PBKDF2-hashed in-memory credential store
 │   │   └── SchedulingService.cs        — availability engine, buffer, ACID transaction
 │   └── Program.cs
 └── ServiceScheduler.Tests/
