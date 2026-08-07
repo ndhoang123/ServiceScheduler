@@ -51,4 +51,30 @@ public class AppointmentsController : ControllerBase
         }
         return NoContent();
     }
+
+    [Authorize(Roles = "ServiceAdvisor,Admin")]
+    [HttpPost("{id:int}/start")]
+    public async Task<IActionResult> Start(int id, [FromBody] AppointmentTransitionRequest request, CancellationToken ct)
+    {
+        var (success, error) = await _scheduling.TransitionAppointmentAsync(id, AppointmentStatus.InProgress, request.ChangedBy, request.Reason, ct);
+        if (!success)
+        {
+            _logger.LogWarning("Start failed: id={AppointmentId} reason={Error}", id, error);
+            return Conflict(new { error });
+        }
+        return NoContent();
+    }
+
+    [Authorize(Roles = "ServiceAdvisor,Admin")]
+    [HttpPost("{id:int}/complete")]
+    public async Task<IActionResult> Complete(int id, [FromBody] AppointmentTransitionRequest request, CancellationToken ct)
+    {
+        var (success, error) = await _scheduling.TransitionAppointmentAsync(id, AppointmentStatus.Completed, request.ChangedBy, request.Reason, ct);
+        if (!success)
+        {
+            _logger.LogWarning("Complete failed: id={AppointmentId} reason={Error}", id, error);
+            return Conflict(new { error });
+        }
+        return NoContent();
+    }
 }

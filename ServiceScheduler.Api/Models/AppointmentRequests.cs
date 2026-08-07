@@ -15,3 +15,9 @@ public class CancelAppointmentRequest
     public string CancelledBy { get; set; } = string.Empty;
     public string Reason { get; set; } = string.Empty;
 }
+
+public class AppointmentTransitionRequest
+{
+    public string ChangedBy { get; set; } = string.Empty;
+    public string Reason { get; set; } = string.Empty;
+}

@@ -143,40 +143,43 @@ public class SchedulingService : ISchedulingService
         }
     }
 
-    public async Task<(bool Success, string Error)> CancelAppointmentAsync(
-        int appointmentId, string cancelledBy, string reason, CancellationToken ct = default)
+    public async Task<(bool Success, string Error)> TransitionAppointmentAsync(
+        int appointmentId, AppointmentStatus toStatus, string changedBy, string reason, CancellationToken ct = default)
     {
-        var appointment = await _db.Appointments
-            .FirstOrDefaultAsync(a => a.Id == appointmentId, ct);
+        var appointment = await _db.Appointments.FirstOrDefaultAsync(a => a.Id == appointmentId, ct);
         if (appointment is null)
             return (false, "Appointment not found.");
 
-        if (!AppointmentStateMachine.CanTransition(appointment.Status, AppointmentStatus.Cancelled))
-            return (false, AppointmentStateMachine.TransitionError(appointment.Status, AppointmentStatus.Cancelled));
+        if (!AppointmentStateMachine.CanTransition(appointment.Status, toStatus))
+            return (false, AppointmentStateMachine.TransitionError(appointment.Status, toStatus));
 
         var fromStatus = appointment.Status;
-        appointment.Status = AppointmentStatus.Cancelled;
+        appointment.Status = toStatus;
         appointment.UpdatedAt = DateTime.UtcNow;
 
         _db.AppointmentAuditLogs.Add(new AppointmentAuditLog
         {
             AppointmentId = appointmentId,
             FromStatus = fromStatus,
-            ToStatus = AppointmentStatus.Cancelled,
-            ChangedBy = cancelledBy,
+            ToStatus = toStatus,
+            ChangedBy = changedBy,
             Reason = reason,
             ChangedAt = DateTime.UtcNow,
         });
 
         await _db.SaveChangesAsync(ct);
 
-        // Cancelled appointments are excluded from collision checks — resources are immediately freed
         _logger.LogInformation(
-            "Appointment cancelled: id={AppointmentId} from={FromStatus} by={CancelledBy}",
-            appointmentId, fromStatus, cancelledBy);
+            "Appointment transitioned: id={AppointmentId} from={FromStatus} to={ToStatus} by={ChangedBy}",
+            appointmentId, fromStatus, toStatus, changedBy);
 
         return (true, string.Empty);
     }
+
+    // Cancelled appointments are excluded from collision checks — resources are freed instantly
+    public Task<(bool Success, string Error)> CancelAppointmentAsync(
+        int appointmentId, string cancelledBy, string reason, CancellationToken ct = default)
+        => TransitionAppointmentAsync(appointmentId, AppointmentStatus.Cancelled, cancelledBy, reason, ct);
 
     // Overlap condition: existingStart < requestedEnd && existingEnd > requestedStart
     private async Task<ServiceBay?> FindAvailableBayAsync(
