@@ -133,7 +133,7 @@ public class SchedulingServiceTests
         await SeedAsync(db);
         var service = CreateService(db);
 
-        var (_, _, appt) = await service.BookAppointmentAsync(MakeRequest(DateTime.UtcNow.AddDays(1)));
+        var (_, _, appt) = await service.BookAppointmentAsync(MakeRequest(DateTime.UtcNow.AddDays(-1)));
         var (success, error) = await service.TransitionAppointmentAsync(appt!.Id, AppointmentStatus.InProgress, "advisor1", "Vehicle checked in");
 
         Assert.True(success);
@@ -148,7 +148,7 @@ public class SchedulingServiceTests
         await SeedAsync(db);
         var service = CreateService(db);
 
-        var (_, _, appt) = await service.BookAppointmentAsync(MakeRequest(DateTime.UtcNow.AddDays(1)));
+        var (_, _, appt) = await service.BookAppointmentAsync(MakeRequest(DateTime.UtcNow.AddDays(-1)));
         await service.TransitionAppointmentAsync(appt!.Id, AppointmentStatus.InProgress, "advisor1", "Started");
         var (success, error) = await service.TransitionAppointmentAsync(appt.Id, AppointmentStatus.Completed, "advisor1", "Done");
 
@@ -178,7 +178,7 @@ public class SchedulingServiceTests
         await SeedAsync(db);
         var service = CreateService(db);
 
-        var (_, _, appt) = await service.BookAppointmentAsync(MakeRequest(DateTime.UtcNow.AddDays(1)));
+        var (_, _, appt) = await service.BookAppointmentAsync(MakeRequest(DateTime.UtcNow.AddDays(-1)));
         await service.TransitionAppointmentAsync(appt!.Id, AppointmentStatus.InProgress, "advisor1", "Started");
         await service.TransitionAppointmentAsync(appt.Id, AppointmentStatus.Completed, "advisor1", "Done");
 
@@ -195,7 +195,7 @@ public class SchedulingServiceTests
         await SeedAsync(db);
         var service = CreateService(db);
 
-        var (_, _, appt) = await service.BookAppointmentAsync(MakeRequest(DateTime.UtcNow.AddDays(1)));
+        var (_, _, appt) = await service.BookAppointmentAsync(MakeRequest(DateTime.UtcNow.AddDays(-1)));
         await service.TransitionAppointmentAsync(appt!.Id, AppointmentStatus.InProgress, "advisor1", "Started");
         await service.TransitionAppointmentAsync(appt.Id, AppointmentStatus.Completed, "advisor1", "Done");
 
@@ -218,6 +218,21 @@ public class SchedulingServiceTests
         var service = CreateService(db);
 
         var (success, error) = await service.TransitionAppointmentAsync(9999, AppointmentStatus.InProgress, "advisor1", "test");
+
+        Assert.False(success);
+        Assert.NotEmpty(error);
+    }
+
+    [Fact]
+    public async Task Transition_StartBeforeScheduledTime_ReturnsError()
+    {
+        var db = CreateDb();
+        await SeedAsync(db);
+        var service = CreateService(db);
+
+        // book in the future so UtcNow < StartTime
+        var (_, _, appt) = await service.BookAppointmentAsync(MakeRequest(DateTime.UtcNow.AddDays(7)));
+        var (success, error) = await service.TransitionAppointmentAsync(appt!.Id, AppointmentStatus.InProgress, "advisor1", "Early start");
 
         Assert.False(success);
         Assert.NotEmpty(error);

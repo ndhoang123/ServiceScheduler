@@ -153,6 +153,10 @@ public class SchedulingService : ISchedulingService
         if (!AppointmentStateMachine.CanTransition(appointment.Status, toStatus))
             return (false, AppointmentStateMachine.TransitionError(appointment.Status, toStatus));
 
+        // cannot start work on an appointment that hasn't reached its scheduled time yet
+        if (toStatus == AppointmentStatus.InProgress && DateTime.UtcNow < appointment.StartTime)
+            return (false, $"Appointment cannot be started before its scheduled time ({appointment.StartTime:u}).");
+
         var fromStatus = appointment.Status;
         appointment.Status = toStatus;
         appointment.UpdatedAt = DateTime.UtcNow;
