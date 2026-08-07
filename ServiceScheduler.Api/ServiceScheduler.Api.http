@@ -90,6 +90,62 @@ Content-Type: application/json
 
 ###
 
+# ─── 7. Full lifecycle: Book → Start → Complete ──────────────────────────────
+# @name bookLifecycle
+POST {{host}}/api/appointments
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "customerId": 1,
+  "vehicleId": 1,
+  "dealershipLocation": "Main",
+  "serviceTypeIds": [1],
+  "startTime": "2026-08-11T09:00:00Z",
+  "advisorId": "advisor"
+}
+
+###
+
+@lifecycleId = {{bookLifecycle.response.body.id}}
+
+# ─── 8. Start the appointment (Confirmed → InProgress) ───────────────────────
+POST {{host}}/api/appointments/{{lifecycleId}}/start
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "changedBy": "advisor",
+  "reason": "Vehicle checked in"
+}
+
+###
+
+# ─── 9. Complete the appointment (InProgress → Completed) ────────────────────
+POST {{host}}/api/appointments/{{lifecycleId}}/complete
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "changedBy": "advisor",
+  "reason": "Work completed successfully"
+}
+
+###
+
+# ─── 10. Cancel a completed appointment → 409 (terminal state) ───────────────
+# State machine rejects Completed → Cancelled
+POST {{host}}/api/appointments/{{lifecycleId}}/cancel
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "cancelledBy": "advisor",
+  "reason": "Should fail — Completed is a terminal state"
+}
+
+###
+
 # ─── Validation: missing serviceTypeIds (400) ─────────────────────────────────
 POST {{host}}/api/appointments
 Authorization: Bearer {{token}}
@@ -281,7 +337,31 @@ Content-Type: application/json
 
 ###
 
-# ─── RBAC-5. Wrong password → 401 Unauthorized ──────────────────────────────
+# ─── RBAC-5. Start with customer token → 403 Forbidden ──────────────────────
+POST {{host}}/api/appointments/1/start
+Authorization: Bearer {{customerToken}}
+Content-Type: application/json
+
+{
+  "changedBy": "customer",
+  "reason": "Customer attempting start — should be 403"
+}
+
+###
+
+# ─── RBAC-6. Complete with customer token → 403 Forbidden ────────────────────
+POST {{host}}/api/appointments/1/complete
+Authorization: Bearer {{customerToken}}
+Content-Type: application/json
+
+{
+  "changedBy": "customer",
+  "reason": "Customer attempting complete — should be 403"
+}
+
+###
+
+# ─── RBAC-7. Wrong password → 401 Unauthorized ──────────────────────────────
 POST {{host}}/api/auth/token
 Content-Type: application/json
 
