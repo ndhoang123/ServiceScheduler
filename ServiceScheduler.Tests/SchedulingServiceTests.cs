@@ -70,7 +70,7 @@ public class SchedulingServiceTests
         VehicleId = 1,
         DealershipLocation = "Main",
         ServiceTypeIds = new List<int> { 1 },
-        StartTime = start,
+        StartTime = start.Date.AddHours(9), // normalize to 09:00 — always within the seeded 08:00-17:00 shift
         AdvisorId = "advisor1"
     };
 
@@ -221,6 +221,68 @@ public class SchedulingServiceTests
 
         Assert.False(success);
         Assert.NotEmpty(error);
+    }
+
+    [Fact]
+    public async Task Book_StartTimeBeforeShift_ReturnsError()
+    {
+        var db = CreateDb();
+        await SeedAsync(db);
+        var service = CreateService(db);
+
+        // 06:00 is before all technician shifts (earliest ShiftStart is 08:00)
+        var earlyStart = DateTime.UtcNow.Date.AddDays(1).AddHours(6);
+        var (success, error, _) = await service.BookAppointmentAsync(MakeRequest(earlyStart) with { StartTime = earlyStart });
+
+        Assert.False(success);
+        Assert.NotEmpty(error);
+    }
+
+    [Fact]
+    public async Task Book_AppointmentEndsAfterAllShifts_ReturnsError()
+    {
+        var db = CreateDb();
+        await SeedAsync(db);
+        var service = CreateService(db);
+
+        // Oil Change = 30 min + 10 buffer = 40 min; 17:30 start → endTime 18:10 > latest ShiftEnd (18:00)
+        var lateStart = DateTime.UtcNow.Date.AddDays(1).AddHours(17).AddMinutes(30);
+        var (success, error, _) = await service.BookAppointmentAsync(MakeRequest(lateStart) with { StartTime = lateStart });
+
+        Assert.False(success);
+        Assert.NotEmpty(error);
+    }
+
+    [Fact]
+    public async Task Book_HigherSkillTechWithLaterShift_AbsorbsOverflow()
+    {
+        // Build a DB with two technicians:
+        //   - John Smith  General,      08:00–17:00
+        //   - Carol Kim   EvCertified,  09:00–18:00
+        // Oil Change (General skill) starting at 16:45 ends at 17:25.
+        // John's shift ends at 17:00 → excluded.
+        // Carol's shift ends at 18:00 ≥ 17:25 → she should be assigned.
+        var db = CreateDb();
+        await SeedAsync(db); // adds John Smith
+        db.Technicians.Add(new Technician
+        {
+            Id = 2,
+            Name = "Carol Kim",
+            DealershipLocation = "Main",
+            Skill = TechnicianSkill.EvCertified,
+            IsActive = true,
+            ShiftStart = new TimeOnly(9, 0),
+            ShiftEnd = new TimeOnly(18, 0)
+        });
+        await db.SaveChangesAsync();
+
+        var service = CreateService(db);
+        var borderStart = DateTime.UtcNow.Date.AddDays(1).AddHours(16).AddMinutes(45);
+        var (success, _, appointment) = await service.BookAppointmentAsync(
+            MakeRequest(borderStart) with { StartTime = borderStart });
+
+        Assert.True(success);
+        Assert.Equal("Carol Kim", appointment!.Technician.Name);
     }
 
     [Fact]

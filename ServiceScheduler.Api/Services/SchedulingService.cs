@@ -213,6 +213,8 @@ public class SchedulingService : ISchedulingService
         string location, List<ServiceType> serviceTypes, DateTime start, DateTime end, CancellationToken ct)
     {
         var minSkill = serviceTypes.Max(st => st.RequiredSkill);
+        var startTimeOnly = TimeOnly.FromDateTime(start);
+        var endTimeOnly   = TimeOnly.FromDateTime(end);
 
         var busyTechIds = await _db.Appointments
             .Where(a => a.DealershipLocation == location
@@ -228,6 +230,8 @@ public class SchedulingService : ISchedulingService
             .Where(t => t.DealershipLocation == location
                      && t.IsActive
                      && t.Skill >= minSkill
+                     && t.ShiftStart <= startTimeOnly   // appointment must start within shift
+                     && t.ShiftEnd   >= endTimeOnly     // appointment (including buffer) must end within shift
                      && !busyTechIds.Contains(t.Id))
             .FirstOrDefaultAsync(ct);
     }
