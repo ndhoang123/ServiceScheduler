@@ -47,19 +47,29 @@ All requests below use `http://localhost:5265`.
 
 ### 0. Get a JWT token
 
-All `/api/appointments` endpoints require a Bearer token. Use the dev token endpoint to generate one:
+All appointment endpoints require a Bearer token. Use the dev token endpoint to generate one:
 
 ```json
 POST /api/auth/token
 {
-  "username": "test-user"
+  "username": "advisor",
+  "password": "Advisor123!"
 }
 ```
+
+Built-in demo accounts:
+
+| Username | Password | Role |
+|---|---|---|
+| `advisor` | `Advisor123!` | `ServiceAdvisor` |
+| `admin` | `Admin123!` | `Admin` |
+| `customer` | `Customer123!` | `Customer` |
 
 Response:
 ```json
 {
-  "token": "eyJhbGci..."
+  "token": "eyJhbGci...",
+  "role": "ServiceAdvisor"
 }
 ```
 
@@ -126,6 +136,40 @@ Repeat the Step 3 payload — resources have been released.
 
 ---
 
+### Full lifecycle: Start → Complete
+
+Book a fresh appointment, then walk it through all active states:
+
+### 7. Start the appointment (Confirmed → InProgress)
+```json
+POST /api/appointments/{id}/start
+{
+  "changedBy": "advisor",
+  "reason": "Vehicle checked in"
+}
+```
+
+### 8. Complete the appointment (InProgress → Completed)
+```json
+POST /api/appointments/{id}/complete
+{
+  "changedBy": "advisor",
+  "reason": "Work completed successfully"
+}
+```
+
+### 9. Attempt to cancel a completed appointment (expect 409)
+```json
+POST /api/appointments/{id}/cancel
+{
+  "cancelledBy": "advisor",
+  "reason": "Should fail — Completed is a terminal state"
+}
+```
+`AppointmentStateMachine` rejects any transition out of `Completed` or `Cancelled`.
+
+---
+
 ## Project Structure
 
 ```
@@ -135,14 +179,22 @@ ServiceScheduler/
 ├── README.md
 ├── ServiceScheduler.Api/
 │   ├── Controllers/
-│   │   ├── AppointmentsController.cs   — booking, retrieval, cancellation
-│   │   ├── AuthController.cs           — dev token generation (POST /api/auth/token)
+│   │   ├── AppointmentsController.cs   — booking, retrieval, start, complete, cancellation
+│   │   ├── AuthController.cs           — JWT token issuance (POST /api/auth/token)
 │   │   └── SeedController.cs           — dev-only data seeding
 │   ├── Data/
 │   │   └── SchedulerDbContext.cs       — EF Core context + index configuration
-│   ├── Models/                         — domain entities and request DTOs
+│   ├── Infrastructure/
+│   │   └── ServiceCollectionExtensions.cs  — grouped DI registration extension methods
+│   ├── Models/                         — domain entities, request/response DTOs
+│   │   └── AppointmentStateMachine.cs  — state transition table (OCP)
+│   ├── Options/
+│   │   └── SchedulingOptions.cs        — configurable scheduling settings (e.g. BufferMinutes)
 │   ├── Services/
-│   │   ├── ISchedulingService.cs
+│   │   ├── Interface/
+│   │   │   ├── ISchedulingService.cs
+│   │   │   └── IUserCredentialStore.cs
+│   │   ├── DemoUserStore.cs            — PBKDF2-hashed in-memory credential store
 │   │   └── SchedulingService.cs        — availability engine, buffer, ACID transaction
 │   └── Program.cs
 └── ServiceScheduler.Tests/

@@ -34,15 +34,21 @@
 ```
 ┌─────────────────────────────────────────────────────────┐
 │                  ASP.NET Core Web API                   │
-│  AppointmentsController  ·  SeedController              │
+│  AppointmentsController  ·  AuthController               │
+│  SeedController  ·  FluentValidation  ·  JWT Bearer Auth  │
+├─────────────────────────────────────────────────────────┤
+│              Service Layer (Interfaces)                  │
+│  ISchedulingService  ·  IUserCredentialStore             │
 ├─────────────────────────────────────────────────────────┤
 │              Core Scheduling Engine                      │
-│  SchedulingService — availability · buffer · collision   │
+│  SchedulingService — availability · buffer · collision    │
+│  AppointmentStateMachine — transition table (OCP)        │
+│  IOptions<SchedulingOptions> — configurable buffer       │
 ├─────────────────────────────────────────────────────────┤
 │         Entity Framework Core (Data Access Layer)        │
-│  SchedulerDbContext — indexed time-window queries        │
+│  SchedulerDbContext — indexed time-window queries         │
 ├─────────────────────────────────────────────────────────┤
-│        InMemory DB (dev/test) │ PostgreSQL / SQL Server  │
+│        SQLite (dev/test) │ PostgreSQL / SQL Server       │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -52,8 +58,9 @@
 
 | Layer | Responsibility |
 |---|---|
-| **API Layer** | HTTP routing, request/response shaping, 409 conflict propagation |
-| **SchedulingService** | Availability algorithm, buffer enforcement, ACID transaction orchestration |
+| **API Layer** | HTTP routing, request/response shaping, 409 conflict propagation, JWT Bearer authentication |
+| **Service Interfaces** | `ISchedulingService`, `IUserCredentialStore` — decoupling contracts for DI and testing |
+| **SchedulingService** | Availability algorithm, buffer enforcement, state-machine transition guard, ACID transaction orchestration |
 | **SchedulerDbContext** | EF Core entity mapping, composite index definitions, DbSet exposure |
 | **Domain Models** | Pure data entities — no business logic |
 
@@ -141,6 +148,23 @@ EndTime = StartTime + Σ(ServiceLine.DurationMinutes) + 10
 
 Because collision checks use `EndTime`, the buffer is automatically enforced for every subsequent booking attempt against the same resource.
 
+### 5.5 State Transition via `AppointmentStateMachine`
+
+All non-booking status changes flow through a single service method:
+
+```
+TransitionAppointmentAsync(appointmentId, toStatus, changedBy, reason):
+  1. Load Appointment by ID
+  2. AppointmentStateMachine.CanTransition(currentStatus, toStatus)
+     → reject if invalid; single source of truth for all valid transitions
+  3. Update Appointment.Status + UpdatedAt
+  4. Append immutable AppointmentAuditLog entry
+  5. SaveChanges
+```
+
+`CancelAppointmentAsync` is a one-line delegate to `TransitionAppointmentAsync(..., Cancelled, ...)`.
+Adding a future state (`OnHold`, `NoShow`) requires one dictionary entry in `AppointmentStateMachine` and one controller action — `TransitionAppointmentAsync` is never modified.
+
 ---
 
 ## 6. Database Index Strategy
@@ -169,18 +193,58 @@ Every transition is recorded in `AppointmentAuditLog` with actor ID, timestamp, 
 
 ---
 
-## 8. API Surface
+## 8. Security
 
-| Method | Route | Description |
-|---|---|---|
-| `POST` | `/api/appointments` | Book a new appointment |
-| `GET` | `/api/appointments/{id}` | Retrieve appointment with service lines and audit log |
-| `POST` | `/api/appointments/{id}/cancel` | Cancel and release resources |
-| `POST` | `/api/seed` | Populate InMemory DB with sample data (dev only) |
+| Concern | Implementation |
+|---|---|
+| **Authentication** | JWT Bearer — all endpoints except `POST /api/auth/token` require a valid token |
+| **Authorization** | Role-based (`[Authorize(Roles = "...")]`) — `ServiceAdvisor` books/cancels/starts/completes; `Admin` seeds; both read and can start/complete |
+| **Credential storage** | `DemoUserStore` hashes passwords with ASP.NET Identity `PasswordHasher<T>` (PBKDF2) |
+| **Token claims** | `sub`, `jti` (unique per token), `name`, `role`; validated issuer, audience, lifetime, and signing key |
+| **Swappability** | `IUserCredentialStore` interface — replace `DemoUserStore` with enterprise SSO by registering a different implementation; zero other code changes |
+| **Key management** | `Jwt:Key` is absent from `appsettings.json`; must be supplied via User Secrets, environment variable, or a secrets vault |
 
 ---
 
-## 9. Non-Functional Requirements & Resilience
+## 9. SOLID Principles & Design Patterns
+
+### SOLID
+
+| Principle | Applied |
+|---|---|
+| **SRP** | Controller handles HTTP only; `SchedulingService` owns domain logic; `BookAppointmentRequestValidator` owns input rules |
+| **OCP** | `AppointmentStateMachine` encodes all valid transitions in a data table — adding a new state requires one dictionary entry, no method changes |
+| **LSP** | `ISchedulingService` and `IUserCredentialStore` have clean contracts; any conforming implementation is substitutable |
+| **ISP** | Interfaces are cohesive and minimal; consumers depend only on what they use |
+| **DIP** | Controllers and `ServiceCollectionExtensions` depend on interfaces, not concrete classes; `IOptions<SchedulingOptions>` decouples configuration |
+
+### Design Patterns
+
+| Pattern | Where |
+|---|---|
+| **Strategy** | `ISchedulingService` / `IUserCredentialStore` — swappable implementations via DI |
+| **State Machine** | `AppointmentStateMachine` — transition table drives all status change validation |
+| **Options Pattern** | `IOptions<SchedulingOptions>` — `BufferMinutes` configurable per environment without code changes |
+| **Static Factory** | `AppointmentResponse.From(appointment)` — controlled mapping from domain entity to response DTO |
+| **Validator** | FluentValidation `AbstractValidator<BookAppointmentRequest>` — validation rules isolated from controller |
+
+---
+
+## 10. API Surface
+
+| Method | Route | Auth | Description |
+|---|---|---|---|
+| `POST` | `/api/auth/token` | None | Issue a JWT for the given username + password |
+| `POST` | `/api/appointments` | `ServiceAdvisor` | Book a new appointment |
+| `GET` | `/api/appointments/{id}` | `ServiceAdvisor`, `Admin` | Retrieve appointment with service lines and audit log |
+| `POST` | `/api/appointments/{id}/cancel` | `ServiceAdvisor` | Cancel and release resources |
+| `POST` | `/api/appointments/{id}/start` | `ServiceAdvisor`, `Admin` | Transition Confirmed → InProgress |
+| `POST` | `/api/appointments/{id}/complete` | `ServiceAdvisor`, `Admin` | Transition InProgress → Completed |
+| `POST` | `/api/seed` | `Admin` | Populate database with sample data (dev only) |
+
+---
+
+## 11. Non-Functional Requirements & Resilience
 
 | Concern | Approach |
 |---|---|
@@ -192,11 +256,11 @@ Every transition is recorded in `AppointmentAuditLog` with actor ID, timestamp, 
 
 ---
 
-## 10. Future Roadmap (Post-MVP)
+## 12. Future Roadmap (Post-MVP)
 
 - Soft-hold reservation system (Redis 5-minute slot lock) for high-concurrency showroom
 - PostgreSQL / SQL Server migration with EF Core migrations
-- JWT authentication middleware (package already installed)
 - Domain event emission for SMS/Email notification microservices
 - Express-lane intentional overbooking mode
 - Technician shift-window enforcement in availability algorithm
+- Repository pattern abstraction over `SchedulerDbContext` for full DIP compliance

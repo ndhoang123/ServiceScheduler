@@ -1,6 +1,6 @@
 namespace ServiceScheduler.Api.Models;
 
-public class BookAppointmentRequest
+public record BookAppointmentRequest
 {
     public int CustomerId { get; set; }
     public int VehicleId { get; set; }
@@ -13,5 +13,11 @@ public class BookAppointmentRequest
 public class CancelAppointmentRequest
 {
     public string CancelledBy { get; set; } = string.Empty;
+    public string Reason { get; set; } = string.Empty;
+}
+
+public class AppointmentTransitionRequest
+{
+    public string ChangedBy { get; set; } = string.Empty;
     public string Reason { get; set; } = string.Empty;
 }

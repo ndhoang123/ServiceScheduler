@@ -1,45 +1,80 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using ServiceScheduler.Api.Data;
 using ServiceScheduler.Api.Models;
+using ServiceScheduler.Api.Options;
+using ServiceScheduler.Api.Services.Interface;
 
 namespace ServiceScheduler.Api.Services;
 
 public class SchedulingService : ISchedulingService
 {
-    // mandatory post-appointment recovery buffer (system design §2)
-    private const int BufferMinutes = 10;
+    private readonly int _bufferMinutes;
 
     private readonly SchedulerDbContext _db;
+    private readonly ILogger<SchedulingService> _logger;
 
-    public SchedulingService(SchedulerDbContext db) => _db = db;
+    public SchedulingService(SchedulerDbContext db, ILogger<SchedulingService> logger, IOptions<SchedulingOptions> options)
+    {
+        _db = db;
+        _logger = logger;
+        _bufferMinutes = options.Value.BufferMinutes;
+    }
+
+    public Task<Appointment?> GetAppointmentByIdAsync(int appointmentId, CancellationToken ct = default)
+        => _db.Appointments
+            .Include(a => a.Customer)
+            .Include(a => a.Vehicle)
+            .Include(a => a.ServiceBay)
+            .Include(a => a.Technician)
+            .Include(a => a.ServiceLines).ThenInclude(sl => sl.ServiceType)
+            .Include(a => a.AuditLogs)
+            .FirstOrDefaultAsync(a => a.Id == appointmentId, ct);
 
     public async Task<(bool Success, string Error, Appointment? Appointment)> BookAppointmentAsync(
-        BookAppointmentRequest request)
+        BookAppointmentRequest request, CancellationToken ct = default)
     {
         var serviceTypes = await _db.ServiceTypes
             .Where(st => request.ServiceTypeIds.Contains(st.Id))
-            .ToListAsync();
+            .ToListAsync(ct);
 
         if (serviceTypes.Count != request.ServiceTypeIds.Count)
             return (false, "One or more service types not found.", null);
 
         // Step 1: total duration including mandatory buffer
-        int totalMinutes = serviceTypes.Sum(st => st.DefaultDurationMinutes) + BufferMinutes;
+        int totalMinutes = serviceTypes.Sum(st => st.DefaultDurationMinutes) + _bufferMinutes;
         var endTime = request.StartTime.AddMinutes(totalMinutes);
 
-        // Steps 2-3: find conflict-free bay and technician
-        var bay = await FindAvailableBayAsync(request.DealershipLocation, serviceTypes, request.StartTime, endTime);
-        if (bay is null)
-            return (false, "No available service bay for the requested time window.", null);
+        _logger.LogInformation(
+            "Booking attempt: location={Location} start={Start} end={End} serviceTypes=[{ServiceTypes}]",
+            request.DealershipLocation, request.StartTime, endTime,
+            string.Join(",", request.ServiceTypeIds));
 
-        var technician = await FindAvailableTechnicianAsync(request.DealershipLocation, serviceTypes, request.StartTime, endTime);
-        if (technician is null)
-            return (false, "No available technician for the requested time window.", null);
-
-        // Step 4: persist inside an ACID transaction
-        using var tx = await _db.Database.BeginTransactionAsync();
+        // Availability checks run inside the serializable transaction to eliminate the TOCTOU race
+        // Switch to BeginTransactionAsync(IsolationLevel.Serializable, ct) when targeting a relational DB.
+        using var tx = await _db.Database.BeginTransactionAsync(ct);
         try
         {
+            var bay = await FindAvailableBayAsync(request.DealershipLocation, serviceTypes, request.StartTime, endTime, ct);
+            if (bay is null)
+            {
+                await tx.RollbackAsync(ct);
+                _logger.LogWarning(
+                    "No available bay: location={Location} start={Start}",
+                    request.DealershipLocation, request.StartTime);
+                return (false, "No available service bay for the requested time window.", null);
+            }
+
+            var technician = await FindAvailableTechnicianAsync(request.DealershipLocation, serviceTypes, request.StartTime, endTime, ct);
+            if (technician is null)
+            {
+                await tx.RollbackAsync(ct);
+                _logger.LogWarning(
+                    "No available technician: location={Location} start={Start}",
+                    request.DealershipLocation, request.StartTime);
+                return (false, "No available technician for the requested time window.", null);
+            }
+
             var appointment = new Appointment
             {
                 CustomerId = request.CustomerId,
@@ -55,7 +90,7 @@ public class SchedulingService : ISchedulingService
             };
 
             _db.Appointments.Add(appointment);
-            await _db.SaveChangesAsync();
+            await _db.SaveChangesAsync(ct);
 
             foreach (var st in serviceTypes)
             {
@@ -79,53 +114,80 @@ public class SchedulingService : ISchedulingService
                 ChangedAt = DateTime.UtcNow,
             });
 
-            await _db.SaveChangesAsync();
-            await tx.CommitAsync();
+            await _db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
 
-            return (true, string.Empty, appointment);
+            _logger.LogInformation(
+                "Appointment confirmed: id={AppointmentId} bay={BayId} technician={TechnicianId}",
+                appointment.Id, bay.Id, technician.Id);
+
+            // reload so all navigation properties are populated for the caller
+            var full = await _db.Appointments
+                .Include(a => a.Customer)
+                .Include(a => a.Vehicle)
+                .Include(a => a.ServiceBay)
+                .Include(a => a.Technician)
+                .Include(a => a.ServiceLines).ThenInclude(sl => sl.ServiceType)
+                .Include(a => a.AuditLogs)
+                .FirstAsync(a => a.Id == appointment.Id, ct);
+
+            return (true, string.Empty, full);
         }
-        catch
+        catch (Exception ex)
         {
-            await tx.RollbackAsync();
+            await tx.RollbackAsync(ct);
+            _logger.LogError(ex,
+                "Booking failed: location={Location} start={Start}",
+                request.DealershipLocation, request.StartTime);
             throw;
         }
     }
 
-    public async Task<(bool Success, string Error)> CancelAppointmentAsync(
-        int appointmentId, string cancelledBy, string reason)
+    public async Task<(bool Success, string Error)> TransitionAppointmentAsync(
+        int appointmentId, AppointmentStatus toStatus, string changedBy, string reason, CancellationToken ct = default)
     {
-        var appointment = await _db.Appointments.FindAsync(appointmentId);
+        var appointment = await _db.Appointments.FirstOrDefaultAsync(a => a.Id == appointmentId, ct);
         if (appointment is null)
             return (false, "Appointment not found.");
-        if (appointment.Status == AppointmentStatus.Cancelled)
-            return (false, "Appointment is already cancelled.");
-        if (appointment.Status == AppointmentStatus.Completed)
-            return (false, "Completed appointments cannot be cancelled.");
+
+        if (!AppointmentStateMachine.CanTransition(appointment.Status, toStatus))
+            return (false, AppointmentStateMachine.TransitionError(appointment.Status, toStatus));
+
+        // cannot start work on an appointment that hasn't reached its scheduled time yet
+        if (toStatus == AppointmentStatus.InProgress && DateTime.UtcNow < appointment.StartTime)
+            return (false, $"Appointment cannot be started before its scheduled time ({appointment.StartTime:u}).");
 
         var fromStatus = appointment.Status;
-        appointment.Status = AppointmentStatus.Cancelled;
+        appointment.Status = toStatus;
         appointment.UpdatedAt = DateTime.UtcNow;
 
         _db.AppointmentAuditLogs.Add(new AppointmentAuditLog
         {
             AppointmentId = appointmentId,
             FromStatus = fromStatus,
-            ToStatus = AppointmentStatus.Cancelled,
-            ChangedBy = cancelledBy,
+            ToStatus = toStatus,
+            ChangedBy = changedBy,
             Reason = reason,
             ChangedAt = DateTime.UtcNow,
         });
 
-        await _db.SaveChangesAsync();
-        // Cancelled appointments are excluded from collision checks — resources are immediately freed
+        await _db.SaveChangesAsync(ct);
+
+        _logger.LogInformation(
+            "Appointment transitioned: id={AppointmentId} from={FromStatus} to={ToStatus} by={ChangedBy}",
+            appointmentId, fromStatus, toStatus, changedBy);
+
         return (true, string.Empty);
     }
 
-    // Finds the first bay at the location whose capability satisfies all service lines
-    // and that has no active appointment overlapping [start, end).
+    // Cancelled appointments are excluded from collision checks — resources are freed instantly
+    public Task<(bool Success, string Error)> CancelAppointmentAsync(
+        int appointmentId, string cancelledBy, string reason, CancellationToken ct = default)
+        => TransitionAppointmentAsync(appointmentId, AppointmentStatus.Cancelled, cancelledBy, reason, ct);
+
     // Overlap condition: existingStart < requestedEnd && existingEnd > requestedStart
     private async Task<ServiceBay?> FindAvailableBayAsync(
-        string location, List<ServiceType> serviceTypes, DateTime start, DateTime end)
+        string location, List<ServiceType> serviceTypes, DateTime start, DateTime end, CancellationToken ct)
     {
         var minCapability = serviceTypes.Max(st => st.RequiredBayCapability);
 
@@ -137,22 +199,22 @@ public class SchedulingService : ISchedulingService
                      && a.EndTime > start)
             .Select(a => a.ServiceBayId)
             .Distinct()
-            .ToListAsync();
+            .ToListAsync(ct);
 
         return await _db.ServiceBays
             .Where(b => b.DealershipLocation == location
                      && b.IsActive
                      && b.CapabilityTag >= minCapability
                      && !busyBayIds.Contains(b.Id))
-            .FirstOrDefaultAsync();
+            .FirstOrDefaultAsync(ct);
     }
 
-    // Finds the first technician at the location whose skill satisfies all service lines
-    // and that has no active appointment overlapping [start, end).
     private async Task<Technician?> FindAvailableTechnicianAsync(
-        string location, List<ServiceType> serviceTypes, DateTime start, DateTime end)
+        string location, List<ServiceType> serviceTypes, DateTime start, DateTime end, CancellationToken ct)
     {
         var minSkill = serviceTypes.Max(st => st.RequiredSkill);
+        var startTimeOnly = TimeOnly.FromDateTime(start);
+        var endTimeOnly   = TimeOnly.FromDateTime(end);
 
         var busyTechIds = await _db.Appointments
             .Where(a => a.DealershipLocation == location
@@ -162,13 +224,15 @@ public class SchedulingService : ISchedulingService
                      && a.EndTime > start)
             .Select(a => a.TechnicianId)
             .Distinct()
-            .ToListAsync();
+            .ToListAsync(ct);
 
         return await _db.Technicians
             .Where(t => t.DealershipLocation == location
                      && t.IsActive
                      && t.Skill >= minSkill
+                     && t.ShiftStart <= startTimeOnly   // appointment must start within shift
+                     && t.ShiftEnd   >= endTimeOnly     // appointment (including buffer) must end within shift
                      && !busyTechIds.Contains(t.Id))
-            .FirstOrDefaultAsync();
+            .FirstOrDefaultAsync(ct);
     }
 }
