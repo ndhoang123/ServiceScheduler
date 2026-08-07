@@ -1,9 +1,10 @@
 using Microsoft.AspNetCore.Identity;
+using ServiceScheduler.Api.Services.Interface;
 
 namespace ServiceScheduler.Api.Services;
 
-// Seeded credentials — replace with a real user store or enterprise SSO in production
-public sealed class DemoUserStore
+// Seeded credentials — replace with a real identity provider in production
+public sealed class DemoUserStore : IUserCredentialStore
 {
     private sealed record DemoUser(string PasswordHash, string Role);
 

@@ -1,19 +1,12 @@
-﻿using FluentValidation;
-using FluentValidation.AspNetCore;
-using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.IdentityModel.Tokens;
+﻿using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi.Models;
 using ServiceScheduler.Api.Data;
-using ServiceScheduler.Api.Services;
-using ServiceScheduler.Api.Validators;
-using System.Text;
+using ServiceScheduler.Api.Infrastructure;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
-builder.Services.AddFluentValidationAutoValidation();
-builder.Services.AddValidatorsFromAssemblyContaining<BookAppointmentRequestValidator>();
+builder.Services.AddSchedulerValidation();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
@@ -38,27 +31,9 @@ builder.Services.AddSwaggerGen(c =>
     });
 });
 
-builder.Services
-    .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer(options =>
-    {
-        var key = Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"]!);
-        options.TokenValidationParameters = new TokenValidationParameters
-        {
-            ValidateIssuer = true,
-            ValidateAudience = true,
-            ValidateLifetime = true,
-            ValidateIssuerSigningKey = true,
-            ValidIssuer = builder.Configuration["Jwt:Issuer"],
-            ValidAudience = builder.Configuration["Jwt:Audience"],
-            IssuerSigningKey = new SymmetricSecurityKey(key)
-        };
-    });
-builder.Services.AddAuthorization();
-builder.Services.AddDbContext<SchedulerDbContext>(opt =>
-    opt.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection")));
-builder.Services.AddScoped<ISchedulingService, SchedulingService>();
-builder.Services.AddSingleton<DemoUserStore>();
+builder.Services.AddSchedulerAuthentication(builder.Configuration);
+builder.Services.AddSchedulerDatabase(builder.Configuration);
+builder.Services.AddSchedulerServices(builder.Configuration);
 builder.Services.AddHealthChecks();
 
 var app = builder.Build();

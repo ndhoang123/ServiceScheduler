@@ -1,9 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using ServiceScheduler.Api.Data;
 using ServiceScheduler.Api.Models;
-using ServiceScheduler.Api.Services;
+using ServiceScheduler.Api.Services.Interface;
 
 namespace ServiceScheduler.Api.Controllers;
 
@@ -35,17 +33,9 @@ public class AppointmentsController : ControllerBase
 
     [Authorize(Roles = "ServiceAdvisor,Admin")]
     [HttpGet("{id:int}")]
-    public async Task<IActionResult> GetById([FromServices] SchedulerDbContext db, int id, CancellationToken ct)
+    public async Task<IActionResult> GetById(int id, CancellationToken ct)
     {
-        var appointment = await db.Appointments
-            .Include(a => a.Customer)
-            .Include(a => a.Vehicle)
-            .Include(a => a.ServiceBay)
-            .Include(a => a.Technician)
-            .Include(a => a.ServiceLines).ThenInclude(sl => sl.ServiceType)
-            .Include(a => a.AuditLogs)
-            .FirstOrDefaultAsync(a => a.Id == id, ct);
-
+        var appointment = await _scheduling.GetAppointmentByIdAsync(id, ct);
         return appointment is null ? NotFound() : Ok(AppointmentResponse.From(appointment));
     }
 

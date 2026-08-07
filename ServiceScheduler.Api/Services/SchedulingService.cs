@@ -1,22 +1,35 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using ServiceScheduler.Api.Data;
 using ServiceScheduler.Api.Models;
+using ServiceScheduler.Api.Options;
+using ServiceScheduler.Api.Services.Interface;
 
 namespace ServiceScheduler.Api.Services;
 
 public class SchedulingService : ISchedulingService
 {
-    // mandatory post-appointment recovery buffer (system design §2)
-    private const int BufferMinutes = 10;
+    private readonly int _bufferMinutes;
 
     private readonly SchedulerDbContext _db;
     private readonly ILogger<SchedulingService> _logger;
 
-    public SchedulingService(SchedulerDbContext db, ILogger<SchedulingService> logger)
+    public SchedulingService(SchedulerDbContext db, ILogger<SchedulingService> logger, IOptions<SchedulingOptions> options)
     {
         _db = db;
         _logger = logger;
+        _bufferMinutes = options.Value.BufferMinutes;
     }
+
+    public Task<Appointment?> GetAppointmentByIdAsync(int appointmentId, CancellationToken ct = default)
+        => _db.Appointments
+            .Include(a => a.Customer)
+            .Include(a => a.Vehicle)
+            .Include(a => a.ServiceBay)
+            .Include(a => a.Technician)
+            .Include(a => a.ServiceLines).ThenInclude(sl => sl.ServiceType)
+            .Include(a => a.AuditLogs)
+            .FirstOrDefaultAsync(a => a.Id == appointmentId, ct);
 
     public async Task<(bool Success, string Error, Appointment? Appointment)> BookAppointmentAsync(
         BookAppointmentRequest request, CancellationToken ct = default)
@@ -29,7 +42,7 @@ public class SchedulingService : ISchedulingService
             return (false, "One or more service types not found.", null);
 
         // Step 1: total duration including mandatory buffer
-        int totalMinutes = serviceTypes.Sum(st => st.DefaultDurationMinutes) + BufferMinutes;
+        int totalMinutes = serviceTypes.Sum(st => st.DefaultDurationMinutes) + _bufferMinutes;
         var endTime = request.StartTime.AddMinutes(totalMinutes);
 
         _logger.LogInformation(
@@ -137,10 +150,9 @@ public class SchedulingService : ISchedulingService
             .FirstOrDefaultAsync(a => a.Id == appointmentId, ct);
         if (appointment is null)
             return (false, "Appointment not found.");
-        if (appointment.Status == AppointmentStatus.Cancelled)
-            return (false, "Appointment is already cancelled.");
-        if (appointment.Status == AppointmentStatus.Completed)
-            return (false, "Completed appointments cannot be cancelled.");
+
+        if (!AppointmentStateMachine.CanTransition(appointment.Status, AppointmentStatus.Cancelled))
+            return (false, AppointmentStateMachine.TransitionError(appointment.Status, AppointmentStatus.Cancelled));
 
         var fromStatus = appointment.Status;
         appointment.Status = AppointmentStatus.Cancelled;

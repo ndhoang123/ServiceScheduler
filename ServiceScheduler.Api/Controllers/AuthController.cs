@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.IdentityModel.Tokens;
-using ServiceScheduler.Api.Services;
+using ServiceScheduler.Api.Services.Interface;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
@@ -12,9 +12,9 @@ namespace ServiceScheduler.Api.Controllers;
 public class AuthController : ControllerBase
 {
     private readonly IConfiguration _config;
-    private readonly DemoUserStore _users;
+    private readonly IUserCredentialStore _users;
 
-    public AuthController(IConfiguration config, DemoUserStore users)
+    public AuthController(IConfiguration config, IUserCredentialStore users)
     {
         _config = config;
         _users = users;
