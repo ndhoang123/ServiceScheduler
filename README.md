@@ -136,6 +136,40 @@ Repeat the Step 3 payload — resources have been released.
 
 ---
 
+### Full lifecycle: Start → Complete
+
+Book a fresh appointment, then walk it through all active states:
+
+### 7. Start the appointment (Confirmed → InProgress)
+```json
+POST /api/appointments/{id}/start
+{
+  "changedBy": "advisor",
+  "reason": "Vehicle checked in"
+}
+```
+
+### 8. Complete the appointment (InProgress → Completed)
+```json
+POST /api/appointments/{id}/complete
+{
+  "changedBy": "advisor",
+  "reason": "Work completed successfully"
+}
+```
+
+### 9. Attempt to cancel a completed appointment (expect 409)
+```json
+POST /api/appointments/{id}/cancel
+{
+  "cancelledBy": "advisor",
+  "reason": "Should fail — Completed is a terminal state"
+}
+```
+`AppointmentStateMachine` rejects any transition out of `Completed` or `Cancelled`.
+
+---
+
 ## Project Structure
 
 ```
@@ -145,7 +179,7 @@ ServiceScheduler/
 ├── README.md
 ├── ServiceScheduler.Api/
 │   ├── Controllers/
-│   │   ├── AppointmentsController.cs   — booking, retrieval, cancellation
+│   │   ├── AppointmentsController.cs   — booking, retrieval, start, complete, cancellation
 │   │   ├── AuthController.cs           — JWT token issuance (POST /api/auth/token)
 │   │   └── SeedController.cs           — dev-only data seeding
 │   ├── Data/

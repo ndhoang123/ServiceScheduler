@@ -148,6 +148,23 @@ EndTime = StartTime + Σ(ServiceLine.DurationMinutes) + 10
 
 Because collision checks use `EndTime`, the buffer is automatically enforced for every subsequent booking attempt against the same resource.
 
+### 5.5 State Transition via `AppointmentStateMachine`
+
+All non-booking status changes flow through a single service method:
+
+```
+TransitionAppointmentAsync(appointmentId, toStatus, changedBy, reason):
+  1. Load Appointment by ID
+  2. AppointmentStateMachine.CanTransition(currentStatus, toStatus)
+     → reject if invalid; single source of truth for all valid transitions
+  3. Update Appointment.Status + UpdatedAt
+  4. Append immutable AppointmentAuditLog entry
+  5. SaveChanges
+```
+
+`CancelAppointmentAsync` is a one-line delegate to `TransitionAppointmentAsync(..., Cancelled, ...)`.
+Adding a future state (`OnHold`, `NoShow`) requires one dictionary entry in `AppointmentStateMachine` and one controller action — `TransitionAppointmentAsync` is never modified.
+
 ---
 
 ## 6. Database Index Strategy
@@ -181,7 +198,7 @@ Every transition is recorded in `AppointmentAuditLog` with actor ID, timestamp, 
 | Concern | Implementation |
 |---|---|
 | **Authentication** | JWT Bearer — all endpoints except `POST /api/auth/token` require a valid token |
-| **Authorization** | Role-based (`[Authorize(Roles = "...")]`) — `ServiceAdvisor` books/cancels; `Admin` seeds; both can read |
+| **Authorization** | Role-based (`[Authorize(Roles = "...")]`) — `ServiceAdvisor` books/cancels/starts/completes; `Admin` seeds; both read and can start/complete |
 | **Credential storage** | `DemoUserStore` hashes passwords with ASP.NET Identity `PasswordHasher<T>` (PBKDF2) |
 | **Token claims** | `sub`, `jti` (unique per token), `name`, `role`; validated issuer, audience, lifetime, and signing key |
 | **Swappability** | `IUserCredentialStore` interface — replace `DemoUserStore` with enterprise SSO by registering a different implementation; zero other code changes |
@@ -221,6 +238,8 @@ Every transition is recorded in `AppointmentAuditLog` with actor ID, timestamp, 
 | `POST` | `/api/appointments` | `ServiceAdvisor` | Book a new appointment |
 | `GET` | `/api/appointments/{id}` | `ServiceAdvisor`, `Admin` | Retrieve appointment with service lines and audit log |
 | `POST` | `/api/appointments/{id}/cancel` | `ServiceAdvisor` | Cancel and release resources |
+| `POST` | `/api/appointments/{id}/start` | `ServiceAdvisor`, `Admin` | Transition Confirmed → InProgress |
+| `POST` | `/api/appointments/{id}/complete` | `ServiceAdvisor`, `Admin` | Transition InProgress → Completed |
 | `POST` | `/api/seed` | `Admin` | Populate database with sample data (dev only) |
 
 ---
