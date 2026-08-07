@@ -20,7 +20,7 @@ public class AppointmentsController : ControllerBase
         _logger = logger;
     }
 
-    [Authorize]
+    [Authorize(Roles = "ServiceAdvisor")]
     [HttpPost()]
     public async Task<IActionResult> Book([FromBody] BookAppointmentRequest request, CancellationToken ct)
     {
@@ -33,6 +33,7 @@ public class AppointmentsController : ControllerBase
         return CreatedAtAction(nameof(GetById), new { id = appointment!.Id }, AppointmentResponse.From(appointment));
     }
 
+    [Authorize(Roles = "ServiceAdvisor,Admin")]
     [HttpGet("{id:int}")]
     public async Task<IActionResult> GetById([FromServices] SchedulerDbContext db, int id, CancellationToken ct)
     {
@@ -48,7 +49,7 @@ public class AppointmentsController : ControllerBase
         return appointment is null ? NotFound() : Ok(AppointmentResponse.From(appointment));
     }
 
-    [Authorize]
+    [Authorize(Roles = "ServiceAdvisor")]
     [HttpPost("{id:int}/cancel")]
     public async Task<IActionResult> Cancel(int id, [FromBody] CancelAppointmentRequest request, CancellationToken ct)
     {

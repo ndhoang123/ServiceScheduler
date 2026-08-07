@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using ServiceScheduler.Api.Data;
 using ServiceScheduler.Api.Models;
@@ -12,6 +13,7 @@ public class SeedController : ControllerBase
 
     public SeedController(SchedulerDbContext db) => _db = db;
 
+    [Authorize(Roles = "Admin")]
     [HttpPost]
     public async Task<IActionResult> Seed()
     {

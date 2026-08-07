@@ -5,22 +5,51 @@ GET {{host}}/health
 
 ###
 
-# ─── 2. Get a JWT (dev-only endpoint) ────────────────────────────────────────
+# ─── 2. Get a JWT — advisor (ServiceAdvisor role) ───────────────────────────
 # @name login
 POST {{host}}/api/auth/token
 Content-Type: application/json
 
 {
-  "username": "advisor1"
+  "username": "advisor",
+  "password": "Advisor123!"
 }
 
 ###
 
 @token = {{login.response.body.token}}
 
-# ─── 3. Seed reference data (bays, techs, customers, vehicles) ───────────────
+# ─── 2b. Get a JWT — admin (Admin role) ──────────────────────────────────────
+# @name loginAdmin
+POST {{host}}/api/auth/token
+Content-Type: application/json
+
+{
+  "username": "admin",
+  "password": "Admin123!"
+}
+
+###
+
+@adminToken = {{loginAdmin.response.body.token}}
+
+# ─── 2c. Get a JWT — customer (Customer role) ────────────────────────────────
+# @name loginCustomer
+POST {{host}}/api/auth/token
+Content-Type: application/json
+
+{
+  "username": "customer",
+  "password": "Customer123!"
+}
+
+###
+
+@customerToken = {{loginCustomer.response.body.token}}
+
+# ─── 3. Seed reference data — requires Admin role (401 with advisor token) ───
 POST {{host}}/api/seed
-Authorization: Bearer {{token}}
+Authorization: Bearer {{adminToken}}
 
 ###
 
@@ -36,15 +65,16 @@ Content-Type: application/json
   "dealershipLocation": "Main",
   "serviceTypeIds": [1],
   "startTime": "2026-08-10T09:00:00Z",
-  "advisorId": "advisor1"
+  "advisorId": "advisor"
 }
 
 ###
 
 @appointmentId = {{book.response.body.id}}
 
-# ─── 5. Retrieve the booked appointment ──────────────────────────────────────
+# ─── 5. Retrieve the booked appointment — ServiceAdvisor or Admin ────────────
 GET {{host}}/api/appointments/{{appointmentId}}
+Authorization: Bearer {{token}}
 
 ###
 
@@ -54,13 +84,210 @@ Authorization: Bearer {{token}}
 Content-Type: application/json
 
 {
-  "cancelledBy": "advisor1",
+  "cancelledBy": "advisor",
   "reason": "Customer requested rescheduling"
 }
 
 ###
 
-# ─── 7. Confirm cancelled (should return 409 if re-cancelled, or 404) ────────
-GET {{host}}/api/appointments/{{appointmentId}}
+# ─── Validation: missing serviceTypeIds (400) ─────────────────────────────────
+POST {{host}}/api/appointments
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "customerId": 1,
+  "vehicleId": 1,
+  "dealershipLocation": "Main",
+  "serviceTypeIds": [],
+  "startTime": "2026-08-10T09:00:00Z",
+  "advisorId": "advisor"
+}
+
+###
+
+# ─── Validation: StartTime in the past (400) ──────────────────────────────────
+POST {{host}}/api/appointments
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "customerId": 1,
+  "vehicleId": 1,
+  "dealershipLocation": "Main",
+  "serviceTypeIds": [1],
+  "startTime": "2020-01-01T09:00:00Z",
+  "advisorId": "advisor"
+}
+
+###
+
+# ─── Validation: invalid IDs and missing required strings (400) ───────────────
+POST {{host}}/api/appointments
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "customerId": 0,
+  "vehicleId": -1,
+  "dealershipLocation": "",
+  "serviceTypeIds": [1, 0],
+  "startTime": "2026-08-10T09:00:00Z",
+  "advisorId": ""
+}
+
+###
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Real-Time Availability Check Scenarios
+#
+# Seeded data (after POST /api/seed):
+#   ServiceType 1 = Oil Change      → 30 min, requires General skill/bay
+#   ServiceType 2 = Brake Repair    → 60 min, requires HeavyRepair skill/bay
+#   ServiceType 3 = EV Battery Check→ 45 min, requires EvCertified skill/bay
+#   Bay 1 = General | Bay 2 = HeavyRepair | Bay 3 = EvCertified
+#   Tech 1 = Alice (General) | Tech 2 = Bob (HeavyRepair) | Tech 3 = Carol (EV)
+#   Buffer = 10 min added to every appointment
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ─── A. Book first Oil Change 09:00–09:40 (30 min + 10 buffer) ───────────────
+# Expects 201 Created — assigns Alice + Bay 1
+# @name bookA
+POST {{host}}/api/appointments
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "customerId": 1,
+  "vehicleId": 1,
+  "dealershipLocation": "Main",
+  "serviceTypeIds": [1],
+  "startTime": "2026-08-10T09:00:00Z",
+  "advisorId": "advisor"
+}
+
+###
+
+# ─── B. Overlapping Oil Change 09:20 (mid-flight) → 409 No bay / technician ──
+# Expects 409 — Alice and Bay 1 are still occupied until 09:40
+POST {{host}}/api/appointments
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "customerId": 2,
+  "vehicleId": 2,
+  "dealershipLocation": "Main",
+  "serviceTypeIds": [1],
+  "startTime": "2026-08-10T09:20:00Z",
+  "advisorId": "advisor"
+}
+
+###
+
+# ─── C. Non-overlapping Oil Change 09:40 (starts exactly when A ends) ────────
+# Expects 201 Created — slot is free again
+POST {{host}}/api/appointments
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "customerId": 2,
+  "vehicleId": 2,
+  "dealershipLocation": "Main",
+  "serviceTypeIds": [1],
+  "startTime": "2026-08-10T09:40:00Z",
+  "advisorId": "advisor"
+}
+
+###
+
+# ─── D. EV Battery Check 10:00–10:55 (45 min + 10 buffer) ───────────────────
+# Expects 201 Created — uses Carol (EvCertified) + Bay 3; separate resource pool
+# @name bookD
+POST {{host}}/api/appointments
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "customerId": 2,
+  "vehicleId": 2,
+  "dealershipLocation": "Main",
+  "serviceTypeIds": [3],
+  "startTime": "2026-08-10T10:00:00Z",
+  "advisorId": "advisor"
+}
+
+###
+
+# ─── E. Duplicate EV Battery Check at 10:00 → 409 (Carol + Bay 3 are busy) ──
+# Expects 409 — EvCertified pool exhausted for this window
+POST {{host}}/api/appointments
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "customerId": 1,
+  "vehicleId": 1,
+  "dealershipLocation": "Main",
+  "serviceTypeIds": [3],
+  "startTime": "2026-08-10T10:00:00Z",
+  "advisorId": "advisor"
+}
+
+###
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# RBAC Enforcement Scenarios
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ─── RBAC-1. Seed with advisor token → 403 Forbidden ─────────────────────────
+POST {{host}}/api/seed
+Authorization: Bearer {{token}}
+
+###
+
+# ─── RBAC-2. Book with customer token → 403 Forbidden ────────────────────────
+POST {{host}}/api/appointments
+Authorization: Bearer {{customerToken}}
+Content-Type: application/json
+
+{
+  "customerId": 1,
+  "vehicleId": 1,
+  "dealershipLocation": "Main",
+  "serviceTypeIds": [1],
+  "startTime": "2026-08-10T11:00:00Z",
+  "advisorId": "customer"
+}
+
+###
+
+# ─── RBAC-3. Get appointment with admin token → 200 OK ───────────────────────
+GET {{host}}/api/appointments/1
+Authorization: Bearer {{adminToken}}
+
+###
+
+# ─── RBAC-4. Cancel with admin token → 403 Forbidden (Admin cannot cancel) ───
+POST {{host}}/api/appointments/1/cancel
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "cancelledBy": "admin",
+  "reason": "Admin attempting cancel — should be 403"
+}
+
+###
+
+# ─── RBAC-5. Wrong password → 401 Unauthorized ──────────────────────────────
+POST {{host}}/api/auth/token
+Content-Type: application/json
+
+{
+  "username": "advisor",
+  "password": "wrongpassword"
+}
 
 ###

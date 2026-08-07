@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.IdentityModel.Tokens;
+using ServiceScheduler.Api.Services;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
@@ -11,32 +12,38 @@ namespace ServiceScheduler.Api.Controllers;
 public class AuthController : ControllerBase
 {
     private readonly IConfiguration _config;
-    private readonly IWebHostEnvironment _env;
+    private readonly DemoUserStore _users;
 
-    public AuthController(IConfiguration config, IWebHostEnvironment env)
+    public AuthController(IConfiguration config, DemoUserStore users)
     {
         _config = config;
-        _env = env;
+        _users = users;
     }
 
     /// <summary>Dev-only endpoint — issues a JWT for local testing.</summary>
     [HttpPost("token")]
     public IActionResult GetToken([FromBody] TokenRequest request)
     {
-        if (string.IsNullOrWhiteSpace(request.Username))
-            return BadRequest(new { error = "Username is required." });
+        if (string.IsNullOrWhiteSpace(request.Username) || string.IsNullOrWhiteSpace(request.Password))
+            return BadRequest(new { error = "Username and password are required." });
+
+        if (!_users.TryValidate(request.Username, request.Password, out var role))
+            return Unauthorized(new { error = "Invalid credentials." });
 
         var jwtKey = _config["Jwt:Key"];
-        
+
         if (string.IsNullOrWhiteSpace(jwtKey))
             return StatusCode(500, new { error = "JWT signing key is not configured (Jwt:Key)." });
-        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey));var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey));
+        var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
         var claims = new[]
         {
             new Claim(JwtRegisteredClaimNames.Sub, request.Username),
             new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
-            new Claim(ClaimTypes.Name, request.Username)
+            new Claim(ClaimTypes.Name, request.Username),
+            new Claim(ClaimTypes.Role, role)
         };
 
         var token = new JwtSecurityToken(
@@ -47,8 +54,8 @@ public class AuthController : ControllerBase
             signingCredentials: creds
         );
 
-        return Ok(new { token = new JwtSecurityTokenHandler().WriteToken(token) });
+        return Ok(new { token = new JwtSecurityTokenHandler().WriteToken(token), role });
     }
 }
 
-public record TokenRequest(string Username);
+public record TokenRequest(string Username, string Password);

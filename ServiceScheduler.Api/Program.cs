@@ -58,6 +58,7 @@ builder.Services.AddAuthorization();
 builder.Services.AddDbContext<SchedulerDbContext>(opt =>
     opt.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection")));
 builder.Services.AddScoped<ISchedulingService, SchedulingService>();
+builder.Services.AddSingleton<DemoUserStore>();
 builder.Services.AddHealthChecks();
 
 var app = builder.Build();
